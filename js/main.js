@@ -22,6 +22,8 @@ class MainScene extends Phaser.Scene {
         this.totalEarnings = 0;
         
         this.destinationText = null;
+        this.idleTimer = null;
+        this.havePasseger = false;
     }
 
     preload() {
@@ -70,7 +72,6 @@ class MainScene extends Phaser.Scene {
         // Setup passenger logic
         this.currentPad = 'Pad3';
         this.destinationPad = 'Pad2';
-        this.setupPassengerPickup();
 
         // Enable collision between the taxi and platforms
         this.physics.add.collider(this.taxi, this.platforms);
@@ -104,31 +105,51 @@ class MainScene extends Phaser.Scene {
     }
 
     update() {
-        // Reset taxi velocity
-        if (this.cursors.left.isDown) {
-            this.taxi.setVelocity(0);
-        }
+        // Deceleration factor
+        const deceleration = 5;
 
-        // Check arrow key inputs and move taxi accordingly
+        // Handling left and right movement
         if (this.cursors.left.isDown) {
             this.taxi.setVelocityX(-this.taxiSpeed);
             this.autoPilot = false;
+            this.resetIdleTimer();
         } else if (this.cursors.right.isDown) {
             this.taxi.setVelocityX(this.taxiSpeed);
             this.autoPilot = false;
+            this.resetIdleTimer();
+        } else {
+            // Gradually decrease the X velocity to 0
+            this.taxi.setVelocityX(this.taxi.body.velocity.x - Math.sign(this.taxi.body.velocity.x) * deceleration);
+            if (Math.abs(this.taxi.body.velocity.x) < deceleration) {
+                this.taxi.setVelocityX(0);
+            }
         }
 
+        // Handling up and down movement
         if (this.cursors.up.isDown) {
             this.taxi.setVelocityY(-this.taxiSpeed);
             this.autoPilot = false;
+            this.resetIdleTimer();
         } else if (this.cursors.down.isDown) {
             this.taxi.setVelocityY(this.taxiSpeed);
             this.autoPilot = false;
+            this.resetIdleTimer();
+        } else {
+            // Gradually decrease the Y velocity to 0
+            this.taxi.setVelocityY(this.taxi.body.velocity.y - Math.sign(this.taxi.body.velocity.y) * deceleration);
+            if (Math.abs(this.taxi.body.velocity.y) < deceleration) {
+                this.taxi.setVelocityY(0);
+            }
         }
 
         // Logic for moving taxi
         if (this.autoPilot) {
             this.moveTaxi();
+        } else {
+            const taxiLanded = this.checkTaxiPosition();
+            if (taxiLanded && this.havePasseger) {
+                this.dropOffPassenger();
+            }
         }
 
         // Check if the taxi has reached the bottom of the playable area
@@ -137,8 +158,9 @@ class MainScene extends Phaser.Scene {
             this.explodeTaxi();
         }
 
-        if (this.earningsCountdown > 0 && this.taxiLandingStage != '') {
-            this.earningsCountdown = this.earningsCountdown - 0.1;
+        const earningsDecrement = 0.1;
+        if (this.earningsCountdown > earningsDecrement && this.taxiLandingStage != '') {
+            this.earningsCountdown = this.earningsCountdown - earningsDecrement;
             this.updateEarningsCountdown(this.earningsCountdown);
         }
     }
@@ -160,11 +182,25 @@ class MainScene extends Phaser.Scene {
         // Load and setup passengers, and other level-specific elements...
     }
 
+    resetIdleTimer() {
+        const idleTimerSeconds = 30;
+
+        // Clear the existing timer
+        if (this.idleTimer) {
+            this.idleTimer.remove();
+        }
+    
+        // Set a new timer for 30 seconds
+        this.idleTimer = this.time.delayedCall((1000 * idleTimerSeconds), () => {
+            this.autoPilot = true;
+        });
+    }
+
     createPlatforms() {
         // Create platforms (pads) at specific positions
-        this.platforms.create(100, 260, 'platform').setName('Pad1');
-        this.platforms.create(300, 260, 'platform').setName('Pad2');
-        this.platforms.create(500, 260, 'platform').setName('Pad3');
+        this.platforms.create(100, 280, 'platform').setName('Pad1');
+        this.platforms.create(350, 280, 'platform').setName('Pad2');
+        this.platforms.create(600, 280, 'platform').setName('Pad3');
     }
 
     setCurrentPlatform(platformName) {
@@ -178,6 +214,7 @@ class MainScene extends Phaser.Scene {
         this.destinationPlatform = randomPlatform;
         this.taxiLandingStage = 'ascending'; // Start the taxi movement sequence
         this.earningsCountdown = 100;
+        this.havePasseger = true;
 
         this.updateDestination(randomPlatform);
     }
@@ -192,11 +229,28 @@ class MainScene extends Phaser.Scene {
         });
     }    
 
-    setupPassengerPickup() {
-        // Define logic for passenger pickup and dropoff
-        // For now, let's just print messages to console
-        console.log('Hey, Taxi! Come to', this.currentPad);
-        console.log('Take me to', this.destinationPad);
+    checkTaxiPosition() {
+        const destination = this.platforms.getChildren().find(p => p.name === this.destinationPlatform);
+        const distanceX = destination.x - this.taxi.x;
+        const distanceY = destination.y - this.taxi.y - 120;
+
+        // Define a threshold for how close the taxi needs to be to the destination
+        const threshold = 30; // Adjust as needed
+    
+        // Check if the taxi is within the threshold distance of the destination
+        return Math.abs(distanceX) < threshold && Math.abs(distanceY) < threshold;
+    }
+
+    dropOffPassenger() {
+        this.havePasseger = false;
+        this.taxi.setVelocityY(0);
+        this.setCurrentPlatform(this.destinationPlatform);
+        this.taxiLandingStage = '';
+        if (this.earningsCountdown > 0) {
+            this.totalEarnings += this.earningsCountdown;
+            this.updateTotalEarnings(this.totalEarnings);
+        }
+        this.setRandomDestinationAfterDelay(); // Set a new destination for the next trip
     }
 
     moveTaxi() {
@@ -229,17 +283,11 @@ class MainScene extends Phaser.Scene {
         } else if (this.taxiLandingStage === 'descending') {
             // Lower the taxi down to the platform
             //if (this.taxi.y < destination.y) {
-            if (this.taxi.y < 120) {
+            //        if (this.checkTaxiPosition()) {
+            if (this.taxi.y < 150) {
                 this.taxi.setVelocityY(20);
             } else {
-                this.taxi.setVelocityY(0);
-                this.setCurrentPlatform(this.destinationPlatform);
-                this.taxiLandingStage = '';
-                if (this.earningsCountdown > 0) {
-                    this.totalEarnings += this.earningsCountdown;
-                    this.updateTotalEarnings(this.totalEarnings);
-                }
-                this.setRandomDestinationAfterDelay(); // Set a new destination for the next trip
+                this.dropOffPassenger();
             }
         }
     }
@@ -280,31 +328,6 @@ class MainScene extends Phaser.Scene {
 	// Function to start the timer when a passenger is picked up
 	startDropOffTimer() {
 		this.dropOffTimer = this.time.now;
-	}
-
-	// Function to calculate earnings after a drop-off
-	calculateEarnings() {
-		const timeTaken = this.time.now - this.dropOffTimer;
-		const baseEarning = 100; // Base earning for a drop-off
-		const timePenalty = 0.5; // Earning reduction per second
-
-		// Calculate earnings based on time taken
-		let earnings = Math.max(baseEarning - timeTaken * timePenalty, 0);
-		this.playerEarnings += earnings;
-
-		// Reset the timer
-		this.dropOffTimer = null;
-
-		// Update UI or display earnings to the player
-		console.log(`Earnings for this trip: $${earnings.toFixed(2)}`);
-		console.log(`Total earnings: $${this.playerEarnings.toFixed(2)}`);
-	}
-
-	handleSuccessfulLanding() {
-		// Calculate earnings on successful passenger drop-off
-		this.calculateEarnings();
-
-		this.setupPassengerPickup();
 	}
 
     // Function to update total earnings display
